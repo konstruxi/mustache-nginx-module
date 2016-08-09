@@ -71,3 +71,4 @@ document his journey on Nginx module development.
  3. Document everything with
     [Doxygen](https://secure.wikimedia.org/wikipedia/en/wiki/Doxygen)
     linking the relevant header and source files from the Nginx core.
+# mustache-nginx-module
