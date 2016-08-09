@@ -1,1010 +1,859 @@
-/* vim: set et ts=3 sw=3 sts=3 ft=c:
- *
- * Copyright (C) 2012, 2013, 2014 James McLaughlin et al.  All rights reserved.
- * https://github.com/udp/json-parser
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * 1. Redistributions of source code must retain the above copyright
- *   notice, this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright
- *   notice, this list of conditions and the following disclaimer in the
- *   documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
- */
+
+
+/*
+ujson4c decoder helper 1.0
+Developed by ESN, an Electronic Arts Inc. studio. 
+Copyright (c) 2013, Electronic Arts Inc.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+* Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+* Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+* Neither the name of ESN, Electronic Arts Inc. nor the
+names of its contributors may be used to endorse or promote products
+derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL ELECTRONIC ARTS INC. BE LIABLE 
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Uses UltraJSON library:
+Copyright (c) 2013, Electronic Arts Inc.
+All rights reserved.
+www.github.com/esnme/ultrajson
+*/
 
 #include "json.h"
-
-#ifdef _MSC_VER
-   #ifndef _CRT_SECURE_NO_WARNINGS
-      #define _CRT_SECURE_NO_WARNINGS
-   #endif
-#endif
-
-const struct _json_value json_value_none;
-
-#include <stdio.h>
-#include <string.h>
-#include <ctype.h>
+#include "ujson.h"
+#include "ujson.c"
 #include <math.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdarg.h>
 
-typedef unsigned int json_uchar;
-
-static unsigned char hex_value (json_char c)
+typedef struct __Item
 {
-   if (isdigit(c))
-      return c - '0';
+  int type;
+} Item;
 
-   switch (c) {
-      case 'a': case 'A': return 0x0A;
-      case 'b': case 'B': return 0x0B;
-      case 'c': case 'C': return 0x0C;
-      case 'd': case 'D': return 0x0D;
-      case 'e': case 'E': return 0x0E;
-      case 'f': case 'F': return 0x0F;
-      default: return 0xFF;
-   }
+typedef struct __StringItem
+{
+  Item item;
+  UJString str;
+} StringItem;
+
+typedef struct __MBStringItem
+{
+  Item item;
+  UJMBString str;
+} MBStringItem;
+
+typedef struct __KeyPair
+{
+  StringItem *name;
+  Item *value;
+  struct __KeyPair *next;
+} KeyPair;
+
+typedef struct __ObjectItem
+{
+  Item item;
+  KeyPair *head;
+  KeyPair *tail;
+} ObjectItem;
+
+typedef struct __ArrayEntry
+{
+  Item *item;
+  struct __ArrayEntry *next;
+} ArrayEntry;
+
+typedef struct __ArrayItem
+{
+  Item item;
+  ArrayEntry *head;
+  ArrayEntry *tail;
+} ArrayItem; 
+
+typedef struct __LongValue
+{
+  Item item;
+  long value;
+} LongValue;
+
+typedef struct __LongLongValue
+{
+  Item item;
+  long long value;
+} LongLongValue;
+
+typedef struct __DoubleValue
+{
+  Item item;
+  double value;
+} DoubleValue;
+
+typedef struct __NullValue
+{
+  Item item;
+} NullValue;
+
+typedef struct __FalseValue
+{
+  Item item;
+} FalseValue;
+
+typedef struct __TrueValue
+{
+  Item item;
+} TrueValue;
+
+typedef struct __HeapSlab
+{
+  unsigned char *start;
+  unsigned char *offset;
+  unsigned char *end;
+  size_t size;
+  char owned;
+  struct __HeapSlab *next;
+} HeapSlab;
+
+struct DecoderStateWrapped
+{
+  HeapSlab *heap;
+  const char *error;
+  void *(*malloc)(size_t cbSize);
+  void (*free)(void *ptr);
+  ngx_http_request_t *r;
+};
+
+
+static void *alloc(struct DecoderStateWrapped *ds, size_t cbSize)
+{
+  unsigned char *ret;
+
+  if (ds->heap->offset + cbSize > ds->heap->end)
+  {
+    size_t newSize = ds->heap->size * 2;
+    HeapSlab *newSlab;
+
+    while (newSize < (cbSize + sizeof (HeapSlab)))
+      newSize *= 2;
+    if (ds->r != NULL) {
+      newSlab = (HeapSlab *) ds->malloc(newSize);
+    } else {
+      newSlab = (HeapSlab *) ds->malloc(newSize);
+    }
+    newSlab->start = (unsigned char *) (newSlab + 1);
+    newSlab->end = (unsigned char *) newSlab + newSize;
+    newSlab->size = newSize;
+    newSlab->offset = newSlab->start;
+    newSlab->owned = 1;
+
+    newSlab->next = ds->heap;
+    ds->heap = newSlab;
+  }
+
+
+  ret = ds->heap->offset;
+  ds->heap->offset += cbSize;
+
+  return ret;
 }
 
-typedef struct
+static JSOBJ newString(void* context, wchar_t *start, wchar_t *end)
 {
-   unsigned long used_memory;
+  struct DecoderStateWrapped *ds = context;
+  size_t len;
+  StringItem *si = (StringItem *) alloc(ds, sizeof(StringItem) + (end - start + 1) * sizeof(wchar_t));
+  len = end - start;
 
-   unsigned int uint_max;
-   unsigned long ulong_max;
+  si->item.type = UJT_String;
+  si->str.ptr = (wchar_t *) (si + 1);
+  si->str.cchLen = len;
 
-   json_settings settings;
-   int first_pass;
+  if (len < 4)
+  {
+    wchar_t *dst = si->str.ptr;
+    wchar_t *end = dst + len;
 
-   const json_char * ptr;
-   unsigned int cur_line, cur_col;
-
-} json_state;
-
-static void * default_alloc (size_t size, int zero, void * user_data)
-{
-   return zero ? calloc (1, size) : malloc (size);
+    while (dst < end)
+    {
+      *(dst++) = *(start++);
+    }
+  }
+  else
+  {
+    memcpy (si->str.ptr, start, len * sizeof(wchar_t));
+  }
+  si->str.ptr[len] = '\0';
+  return (JSOBJ) si;
 }
 
-static void default_free (void * ptr, void * user_data)
+static void objectAddKey(void* context, JSOBJ obj, JSOBJ name, JSOBJ value)
 {
-   free (ptr);
+  struct DecoderStateWrapped *ds = context;
+  ObjectItem *oi = (ObjectItem *) obj;
+  KeyPair *kp = (KeyPair *) alloc(ds, sizeof(KeyPair));
+
+  kp->next = NULL;
+
+  kp->name = (StringItem *) name;
+  kp->value = (Item *) value;
+
+  if (oi->tail)
+  {
+    oi->tail->next = kp;
+  }
+  else
+  {
+    oi->head = kp;
+  }
+  oi->tail = kp;
 }
 
-static void * json_alloc (json_state * state, unsigned long size, int zero)
+static void arrayAddItem(void* context, JSOBJ obj, JSOBJ value)
 {
-   if ((state->ulong_max - state->used_memory) < size)
-      return 0;
+  struct DecoderStateWrapped *ds = context;
+  ArrayItem *ai = (ArrayItem *) obj;
+  ArrayEntry *ae = (ArrayEntry *) alloc(ds, sizeof(ArrayEntry));
 
-   if (state->settings.max_memory
-         && (state->used_memory += size) > state->settings.max_memory)
-   {
-      return 0;
-   }
+  ae->next = NULL;
+  ae->item = (Item *) value;
 
-   return state->settings.mem_alloc (size, zero, state->settings.user_data);
+  if (ai->tail)
+  {
+    ai->tail->next = ae;
+  }
+  else
+  {
+    ai->head = ae;
+  }
+  ai->tail = ae;
+
 }
 
-static int new_value (json_state * state,
-                      json_value ** top, json_value ** root, json_value ** alloc,
-                      json_type type)
+static JSOBJ newTrue(void* context)
 {
-   json_value * value;
-   int values_size;
+  struct DecoderStateWrapped *ds = context;
+  TrueValue *tv = (TrueValue *) alloc(ds, sizeof(TrueValue *));
+  tv->item.type = UJT_True;
+  return (JSOBJ) tv;
+}
 
-   if (!state->first_pass)
-   {
-      value = *top = *alloc;
-      *alloc = (*alloc)->_reserved.next_alloc;
+static JSOBJ newFalse(void *context)
+{
+  struct DecoderStateWrapped *ds = context;
+  FalseValue *fv = (FalseValue *) alloc(ds, sizeof(FalseValue *));
+  fv->item.type = UJT_False;
+  return (JSOBJ) fv;
+}
 
-      if (!*root)
-         *root = value;
+static JSOBJ newNull(void *context)
+{
+  struct DecoderStateWrapped *ds = context;
+  NullValue *nv = (NullValue *) alloc(ds, sizeof(NullValue *));
+  nv->item.type = UJT_Null;
+  return (JSOBJ) nv;
+}
 
-      switch (value->type)
+static JSOBJ newObject(void *context)
+{
+  struct DecoderStateWrapped *ds = context;
+  ObjectItem *oi = (ObjectItem *) alloc(ds, sizeof(ObjectItem));
+  oi->item.type = UJT_Object;
+  oi->head = NULL;
+  oi->tail = NULL;
+
+  return (JSOBJ) oi;
+}
+
+static JSOBJ newArray(void *context)
+{
+  struct DecoderStateWrapped *ds = context;
+  ArrayItem *ai = (ArrayItem *) alloc(ds, sizeof(ArrayItem));
+  ai->head = NULL;
+  ai->tail = NULL;
+  ai->item.type = UJT_Array;
+  return (JSOBJ) ai;
+}
+
+static JSOBJ newInt(void *context, JSINT32 value)
+{
+  struct DecoderStateWrapped *ds = context;
+  LongValue *lv = (LongValue *) alloc(ds, sizeof(LongValue));
+  lv->item.type = UJT_Long;
+  lv->value = (long) value;
+  return (JSOBJ) lv;
+}
+
+static JSOBJ newLong(void *context, JSINT64 value)
+{
+  struct DecoderStateWrapped *ds = context;
+  LongLongValue *llv = (LongLongValue *) alloc(ds, sizeof(LongLongValue));
+  llv->item.type = UJT_LongLong;
+  llv->value = (long long) value;
+  return (JSOBJ) llv;
+}
+
+static JSOBJ newDouble(void *context, double value)
+{
+  struct DecoderStateWrapped *ds = context;
+  DoubleValue *dv = (DoubleValue *) alloc(ds, sizeof(DoubleValue));
+  dv->item.type = UJT_Double;
+  dv->value = (double) value;
+  return (JSOBJ) dv;
+}
+
+static void releaseObject(void *context, JSOBJ obj)
+{
+  struct DecoderStateWrapped *ds = context;
+  //NOTE: Fix for C4100 warning in L4 MSVC
+  ds = NULL;
+  obj = NULL;
+}
+
+static double GetDouble(UJObject obj)
+{
+  return ((DoubleValue *) obj)->value;
+}
+
+static long GetLong(UJObject obj)
+{
+  return ((LongValue *) obj)->value;
+}
+
+static long long GetLongLong(UJObject obj)
+{
+  return ((LongLongValue *) obj)->value;
+}
+
+void UJFree(void *state)
+{
+  struct DecoderStateWrapped *ds = (struct DecoderStateWrapped *) state;
+
+  HeapSlab *slab = ds->heap;
+  HeapSlab *next;
+  while (slab)
+  {
+    next = slab->next;
+
+    if (slab->owned)
+    {
+      ds->free(slab);
+    }
+
+    slab = next;
+  }
+}
+
+int UJIsNull(UJObject obj)
+{
+  if (((Item *) obj)->type == UJT_Null)
+  {
+    return 1;
+  }
+
+  return 0;
+}
+
+int UJIsTrue(UJObject obj)
+{
+  if (((Item *) obj)->type == UJT_True)
+  {
+    return 1;
+  }
+  
+  return 0;
+}
+
+int UJIsFalse(UJObject obj)
+{
+  if (((Item *) obj)->type == UJT_False)
+  {
+    return 1;
+  }
+  
+
+  return 0;
+}
+
+int UJIsLong(UJObject obj)
+{
+  if (((Item *) obj)->type == UJT_Long)
+  {
+    return 1;
+  }
+
+  return 0;
+}
+
+int UJIsLongLong(UJObject obj)
+{
+  if (((Item *) obj)->type == UJT_LongLong)
+  {
+    return 1;
+  }
+
+  return 0;
+}
+
+int UJIsInteger(UJObject *obj)
+{
+  if (((Item *) obj)->type == UJT_LongLong ||
+    ((Item *) obj)->type == UJT_Long)
+  {
+    return 1;
+  }
+
+  return 0;
+}
+
+int UJIsDouble(UJObject obj)
+{
+  if (((Item *) obj)->type == UJT_Double)
+  {
+    return 1;
+  }
+
+  return 0;
+}
+
+int UJIsString(UJObject obj)
+{
+  if (((Item *) obj)->type == UJT_String)
+  {
+    return 1;
+  }
+
+  return 0;
+}
+int UJIsMBString(UJObject obj)
+{
+  if (((Item *) obj)->type == UJT_MBString)
+  {
+    return 1;
+  }
+
+  return 0;
+}
+
+int UJIsArray(UJObject obj)
+{
+  if (((Item *) obj)->type == UJT_Array)
+  {
+    return 1;
+  }
+
+  return 0;
+}
+
+int UJIsObject(UJObject obj)
+{
+  if (((Item *) obj)->type == UJT_Object)
+  {
+    return 1;
+  }
+
+  return 0;
+}
+
+void *UJBeginArray(UJObject arrObj)
+{
+  switch ( ((Item *) arrObj)->type)
+  {
+  case UJT_Array: return ((ObjectItem *) arrObj)->head;
+  default: break;
+  }
+
+  return NULL;
+}
+
+int UJIterArray(void **iter, UJObject *outObj)
+{
+  ArrayEntry *ae = (ArrayEntry *) *iter;
+
+  if (ae == NULL)
+  {
+    return 0;
+  }
+
+  *iter = ae->next;
+  *outObj = ae->item;
+
+  return 1;
+}
+
+void *UJBeginObject(UJObject objObj)
+{
+  switch ( ((Item *) objObj)->type)
+  {
+  case UJT_Object: return ((ObjectItem *) objObj)->head;
+  default: break;
+  }
+
+  return NULL;
+}
+
+int UJIterObject(void **iter, UJString *outKey, UJObject *outValue)
+{
+  KeyPair *kp;
+
+  if (*iter == NULL)
+  {
+    return 0;
+  }
+
+  kp = (KeyPair *) *iter;
+
+  if (kp == NULL)
+  {
+    return 0;
+  }
+
+  *outKey = ((StringItem *) kp->name)->str;
+  *outValue = kp->value;
+  *iter = kp->next;
+  return 1;
+}
+
+long long UJNumericLongLong(UJObject obj)
+{
+  switch ( ((Item *) obj)->type)
+  {
+  case UJT_Long: return (long long) GetLong(obj);
+  case UJT_LongLong: return (long long) GetLongLong(obj);
+  case UJT_Double: return (long long) GetDouble(obj);
+  default: break;
+  }
+
+  return 0;
+}
+
+int UJNumericInt(UJObject obj)
+{
+  switch ( ((Item *) obj)->type)
+  {
+  case UJT_Long: return (int) GetLong(obj);
+  case UJT_LongLong: return (int) GetLongLong(obj);
+  case UJT_Double: return (int) GetDouble(obj);
+  default: break;
+  }
+
+  return 0;
+}
+
+double UJNumericFloat(UJObject obj)
+{
+  switch ( ((Item *) obj)->type)
+  {
+  case UJT_Long: return (double) GetLong(obj);
+  case UJT_LongLong: return (double) GetLongLong(obj);
+  case UJT_Double: return (double) GetDouble(obj);
+  default: break;
+  }
+
+  return 0.0;
+}
+
+const wchar_t *UJReadString(UJObject obj, size_t *cchOutBuffer)
+{
+  switch ( ((Item *) obj)->type)
+  {
+  case UJT_String:
+    if (cchOutBuffer)
+      *cchOutBuffer = ( (StringItem *) obj)->str.cchLen;
+    return ( (StringItem *) obj)->str.ptr;
+
+  default:
+    break;
+  }
+
+  if (cchOutBuffer)
+    *cchOutBuffer = 0;
+  return L"";
+}
+
+const char *UJGetError(void *state)
+{
+  if (state == NULL)
+    return NULL;
+
+  return ( (struct DecoderStateWrapped *) state)->error;
+}
+
+int UJGetType(UJObject obj)
+{
+  return ((Item *) obj)->type;
+}
+
+static int checkType(int ki, const char *format, UJObject obj)
+{
+  int c = (unsigned char) format[ki];
+  int type = UJGetType(obj);
+  int allowNull = 0;
+
+  switch (c)
+  {
+  case 'b':
+    allowNull = 1;
+  case 'B':
+    switch (type)
+    {
+      case UJT_Null:
+        if (!allowNull)
+          return 0;
+      case UJT_True:
+      case UJT_False:
+        return 1;
+
+      default:
+        return 0;
+    }
+    break;
+
+  case 'n':
+    allowNull = 1;
+  case 'N':
+    switch (type)
+    {
+      case UJT_Null:
+        if (!allowNull)
+          return 0;
+      case UJT_Long:
+      case UJT_LongLong:
+      case UJT_Double:
+        return 1;
+
+      default:
+        return 0;
+    }
+    break;
+
+  case 's':
+    allowNull = 1;
+  case 'S':
+    switch (type)
+    {
+      case UJT_Null:
+        if (!allowNull)
+          return 0;
+      case UJT_String:
+        return 1;
+
+      default:
+        return 0;
+    }
+    break;
+
+  case 'a':
+    allowNull = 1;
+  case 'A':
+    switch (type)
+    {
+      case UJT_Null:
+        if (!allowNull)
+          return 0;
+      case UJT_Array:
+        return 1;
+
+      default:
+        return 0;
+    }
+    break;
+
+  case 'o':
+    allowNull = 1;
+  case 'O':
+    switch (type)
+    {
+      case UJT_Null:
+        if (!allowNull)
+          return 0;
+      case UJT_Object:
+        return 1;
+      default:
+        return 0;
+    }
+
+    break;
+
+  case 'u':
+    allowNull = 1;
+  case 'U':
+    return 1;
+    break;
+  }
+
+  return 0;
+}
+
+int UJObjectUnpack(UJObject objObj, int keys, const char *format, const wchar_t **_keyNames, ...)
+{
+  void *iter;
+  UJString key;
+  UJObject value;
+  int found = 0;
+  int ki;
+  int ks = 0;
+  const wchar_t *keyNames[64];
+  va_list args;
+  UJObject *outValue;
+
+  va_start(args, _keyNames);
+
+  if (!UJIsObject(objObj))
+  {
+    return 0;
+  }
+  
+  iter = UJBeginObject(objObj);
+
+  if (keys > 64)
+  {
+    return -1;
+  }
+
+  for (ki = 0; ki < keys; ki ++)
+  {
+    keyNames[ki] = _keyNames[ki];
+  }
+  
+  while (UJIterObject(&iter, &key, &value))
+  {
+    for (ki = ks; ki < keys; ki ++)
+    {
+      const wchar_t *kn = keyNames[ki];
+
+      if (kn == NULL)
       {
-         case json_array:
-
-            if (value->u.array.length == 0)
-               break;
-
-            if (! (value->u.array.values = (json_value **) json_alloc
-               (state, value->u.array.length * sizeof (json_value *), 0)) )
-            {
-               return 0;
-            }
-
-            value->u.array.length = 0;
-            break;
-
-         case json_object:
-
-            if (value->u.object.length == 0)
-               break;
-
-            values_size = sizeof (*value->u.object.values) * value->u.object.length;
-
-            if (! (value->u.object.values = (json_object_entry *) json_alloc
-                  (state, values_size + ((unsigned long) value->u.object.values), 0)) )
-            {
-               return 0;
-            }
-
-            value->_reserved.object_mem = (*(char **) &value->u.object.values) + values_size;
-
-            value->u.object.length = 0;
-            break;
-
-         case json_string:
-
-            if (! (value->u.string.ptr = (json_char *) json_alloc
-               (state, (value->u.string.length + 1) * sizeof (json_char), 0)) )
-            {
-               return 0;
-            }
-
-            value->u.string.length = 0;
-            break;
-
-         default:
-            break;
-      };
-
-      return 1;
-   }
-
-   if (! (value = (json_value *) json_alloc
-         (state, sizeof (json_value) + state->settings.value_extra, 1)))
-   {
-      return 0;
-   }
-
-   if (!*root)
-      *root = value;
-
-   value->type = type;
-   value->parent = *top;
-
-   #ifdef JSON_TRACK_SOURCE
-      value->line = state->cur_line;
-      value->col = state->cur_col;
-   #endif
-
-   if (*alloc)
-      (*alloc)->_reserved.next_alloc = value;
-
-   *alloc = *top = value;
-
-   return 1;
-}
-
-#define whitespace \
-   case '\n': ++ state.cur_line;  state.cur_col = 0; \
-   case ' ': case '\t': case '\r'
-
-#define string_add(b)  \
-   do { if (!state.first_pass) string [string_length] = b;  ++ string_length; } while (0);
-
-#define line_and_col \
-   state.cur_line, state.cur_col
-
-static const long
-   flag_next             = 1 << 0,
-   flag_reproc           = 1 << 1,
-   flag_need_comma       = 1 << 2,
-   flag_seek_value       = 1 << 3, 
-   flag_escaped          = 1 << 4,
-   flag_string           = 1 << 5,
-   flag_need_colon       = 1 << 6,
-   flag_done             = 1 << 7,
-   flag_num_negative     = 1 << 8,
-   flag_num_zero         = 1 << 9,
-   flag_num_e            = 1 << 10,
-   flag_num_e_got_sign   = 1 << 11,
-   flag_num_e_negative   = 1 << 12,
-   flag_line_comment     = 1 << 13,
-   flag_block_comment    = 1 << 14;
-
-json_value * json_parse_ex (json_settings * settings,
-                            const json_char * json,
-                            size_t length,
-                            char * error_buf)
-{
-   json_char error [json_error_max];
-   const json_char * end;
-   json_value * top, * root, * alloc = 0;
-   json_state state = { 0 };
-   long flags;
-   long num_digits = 0, num_e = 0;
-   json_int_t num_fraction = 0;
-
-   /* Skip UTF-8 BOM
-    */
-   if (length >= 3 && ((unsigned char) json [0]) == 0xEF
-                   && ((unsigned char) json [1]) == 0xBB
-                   && ((unsigned char) json [2]) == 0xBF)
-   {
-      json += 3;
-      length -= 3;
-   }
-
-   error[0] = '\0';
-   end = (json + length);
-
-   memcpy (&state.settings, settings, sizeof (json_settings));
-
-   if (!state.settings.mem_alloc)
-      state.settings.mem_alloc = default_alloc;
-
-   if (!state.settings.mem_free)
-      state.settings.mem_free = default_free;
-
-   memset (&state.uint_max, 0xFF, sizeof (state.uint_max));
-   memset (&state.ulong_max, 0xFF, sizeof (state.ulong_max));
-
-   state.uint_max -= 8; /* limit of how much can be added before next check */
-   state.ulong_max -= 8;
-
-   for (state.first_pass = 1; state.first_pass >= 0; -- state.first_pass)
-   {
-      json_uchar uchar;
-      unsigned char uc_b1, uc_b2, uc_b3, uc_b4;
-      json_char * string = 0;
-      unsigned int string_length = 0;
-
-      top = root = 0;
-      flags = flag_seek_value;
-
-      state.cur_line = 1;
-
-      for (state.ptr = json ;; ++ state.ptr)
-      {
-         json_char b = (state.ptr == end ? 0 : *state.ptr);
-         
-         if (flags & flag_string)
-         {
-            if (!b)
-            {  sprintf (error, "Unexpected EOF in string (at %d:%d)", line_and_col);
-               goto e_failed;
-            }
-
-            if (string_length > state.uint_max)
-               goto e_overflow;
-
-            if (flags & flag_escaped)
-            {
-               flags &= ~ flag_escaped;
-
-               switch (b)
-               {
-                  case 'b':  string_add ('\b');  break;
-                  case 'f':  string_add ('\f');  break;
-                  case 'n':  string_add ('\n');  break;
-                  case 'r':  string_add ('\r');  break;
-                  case 't':  string_add ('\t');  break;
-                  case 'u':
-
-                    if (end - state.ptr < 4 || 
-                        (uc_b1 = hex_value (*++ state.ptr)) == 0xFF ||
-                        (uc_b2 = hex_value (*++ state.ptr)) == 0xFF ||
-                        (uc_b3 = hex_value (*++ state.ptr)) == 0xFF ||
-                        (uc_b4 = hex_value (*++ state.ptr)) == 0xFF)
-                    {
-                        sprintf (error, "Invalid character value `%c` (at %d:%d)", b, line_and_col);
-                        goto e_failed;
-                    }
-
-                    uc_b1 = (uc_b1 << 4) | uc_b2;
-                    uc_b2 = (uc_b3 << 4) | uc_b4;
-                    uchar = (uc_b1 << 8) | uc_b2;
-
-                    if ((uchar & 0xF800) == 0xD800) {
-                        json_uchar uchar2;
-                        
-                        if (end - state.ptr < 6 || (*++ state.ptr) != '\\' || (*++ state.ptr) != 'u' ||
-                            (uc_b1 = hex_value (*++ state.ptr)) == 0xFF ||
-                            (uc_b2 = hex_value (*++ state.ptr)) == 0xFF ||
-                            (uc_b3 = hex_value (*++ state.ptr)) == 0xFF ||
-                            (uc_b4 = hex_value (*++ state.ptr)) == 0xFF)
-                        {
-                            sprintf (error, "Invalid character value `%c` (at %d:%d)", b, line_and_col);
-                            goto e_failed;
-                        }
-
-                        uc_b1 = (uc_b1 << 4) | uc_b2;
-                        uc_b2 = (uc_b3 << 4) | uc_b4;
-                        uchar2 = (uc_b1 << 8) | uc_b2;
-                        
-                        uchar = 0x010000 | ((uchar & 0x3FF) << 10) | (uchar2 & 0x3FF);
-                    }
-
-                    if (sizeof (json_char) >= sizeof (json_uchar) || (uchar <= 0x7F))
-                    {
-                       string_add ((json_char) uchar);
-                       break;
-                    }
-
-                    if (uchar <= 0x7FF)
-                    {
-                        if (state.first_pass)
-                           string_length += 2;
-                        else
-                        {  string [string_length ++] = 0xC0 | (uchar >> 6);
-                           string [string_length ++] = 0x80 | (uchar & 0x3F);
-                        }
-
-                        break;
-                    }
-
-                    if (uchar <= 0xFFFF) {
-                        if (state.first_pass)
-                           string_length += 3;
-                        else
-                        {  string [string_length ++] = 0xE0 | (uchar >> 12);
-                           string [string_length ++] = 0x80 | ((uchar >> 6) & 0x3F);
-                           string [string_length ++] = 0x80 | (uchar & 0x3F);
-                        }
-                        
-                        break;
-                    }
-
-                    if (state.first_pass)
-                       string_length += 4;
-                    else
-                    {  string [string_length ++] = 0xF0 | (uchar >> 18);
-                       string [string_length ++] = 0x80 | ((uchar >> 12) & 0x3F);
-                       string [string_length ++] = 0x80 | ((uchar >> 6) & 0x3F);
-                       string [string_length ++] = 0x80 | (uchar & 0x3F);
-                    }
-
-                    break;
-
-                  default:
-                     string_add (b);
-               };
-
-               continue;
-            }
-
-            if (b == '\\')
-            {
-               flags |= flag_escaped;
-               continue;
-            }
-
-            if (b == '"')
-            {
-               if (!state.first_pass)
-                  string [string_length] = 0;
-
-               flags &= ~ flag_string;
-               string = 0;
-
-               switch (top->type)
-               {
-                  case json_string:
-
-                     top->u.string.length = string_length;
-                     flags |= flag_next;
-
-                     break;
-
-                  case json_object:
-
-                     if (state.first_pass)
-                        (*(json_char **) &top->u.object.values) += string_length + 1;
-                     else
-                     {  
-                        top->u.object.values [top->u.object.length].name
-                           = (json_char *) top->_reserved.object_mem;
-
-                        top->u.object.values [top->u.object.length].name_length
-                           = string_length;
-
-                        (*(json_char **) &top->_reserved.object_mem) += string_length + 1;
-                     }
-
-                     flags |= flag_seek_value | flag_need_colon;
-                     continue;
-
-                  default:
-                     break;
-               };
-            }
-            else
-            {
-               string_add (b);
-               continue;
-            }
-         }
-
-         if (state.settings.settings & json_enable_comments)
-         {
-            if (flags & (flag_line_comment | flag_block_comment))
-            {
-               if (flags & flag_line_comment)
-               {
-                  if (b == '\r' || b == '\n' || !b)
-                  {
-                     flags &= ~ flag_line_comment;
-                     -- state.ptr;  /* so null can be reproc'd */
-                  }
-
-                  continue;
-               }
-
-               if (flags & flag_block_comment)
-               {
-                  if (!b)
-                  {  sprintf (error, "%d:%d: Unexpected EOF in block comment", line_and_col);
-                     goto e_failed;
-                  }
-
-                  if (b == '*' && state.ptr < (end - 1) && state.ptr [1] == '/')
-                  {
-                     flags &= ~ flag_block_comment;
-                     ++ state.ptr;  /* skip closing sequence */
-                  }
-
-                  continue;
-               }
-            }
-            else if (b == '/')
-            {
-               if (! (flags & (flag_seek_value | flag_done)) && top->type != json_object)
-               {  sprintf (error, "%d:%d: Comment not allowed here", line_and_col);
-                  goto e_failed;
-               }
-
-               if (++ state.ptr == end)
-               {  sprintf (error, "%d:%d: EOF unexpected", line_and_col);
-                  goto e_failed;
-               }
-
-               switch (b = *state.ptr)
-               {
-                  case '/':
-                     flags |= flag_line_comment;
-                     continue;
-
-                  case '*':
-                     flags |= flag_block_comment;
-                     continue;
-
-                  default:
-                     sprintf (error, "%d:%d: Unexpected `%c` in comment opening sequence", line_and_col, b);
-                     goto e_failed;
-               };
-            }
-         }
-
-         if (flags & flag_done)
-         {
-            if (!b)
-               break;
-
-            switch (b)
-            {
-               whitespace:
-                  continue;
-
-               default:
-
-                  sprintf (error, "%d:%d: Trailing garbage: `%c`",
-                           state.cur_line, state.cur_col, b);
-
-                  goto e_failed;
-            };
-         }
-
-         if (flags & flag_seek_value)
-         {
-            switch (b)
-            {
-               whitespace:
-                  continue;
-
-               case ']':
-
-                  if (top && top->type == json_array)
-                     flags = (flags & ~ (flag_need_comma | flag_seek_value)) | flag_next;
-                  else
-                  {  sprintf (error, "%d:%d: Unexpected ]", line_and_col);
-                     goto e_failed;
-                  }
-
-                  break;
-
-               default:
-
-                  if (flags & flag_need_comma)
-                  {
-                     if (b == ',')
-                     {  flags &= ~ flag_need_comma;
-                        continue;
-                     }
-                     else
-                     {
-                        sprintf (error, "%d:%d: Expected , before %c",
-                                 state.cur_line, state.cur_col, b);
-
-                        goto e_failed;
-                     }
-                  }
-
-                  if (flags & flag_need_colon)
-                  {
-                     if (b == ':')
-                     {  flags &= ~ flag_need_colon;
-                        continue;
-                     }
-                     else
-                     { 
-                        sprintf (error, "%d:%d: Expected : before %c",
-                                 state.cur_line, state.cur_col, b);
-
-                        goto e_failed;
-                     }
-                  }
-
-                  flags &= ~ flag_seek_value;
-
-                  switch (b)
-                  {
-                     case '{':
-
-                        if (!new_value (&state, &top, &root, &alloc, json_object))
-                           goto e_alloc_failure;
-
-                        continue;
-
-                     case '[':
-
-                        if (!new_value (&state, &top, &root, &alloc, json_array))
-                           goto e_alloc_failure;
-
-                        flags |= flag_seek_value;
-                        continue;
-
-                     case '"':
-
-                        if (!new_value (&state, &top, &root, &alloc, json_string))
-                           goto e_alloc_failure;
-
-                        flags |= flag_string;
-
-                        string = top->u.string.ptr;
-                        string_length = 0;
-
-                        continue;
-
-                     case 't':
-
-                        if ((end - state.ptr) < 3 || *(++ state.ptr) != 'r' ||
-                            *(++ state.ptr) != 'u' || *(++ state.ptr) != 'e')
-                        {
-                           goto e_unknown_value;
-                        }
-
-                        if (!new_value (&state, &top, &root, &alloc, json_boolean))
-                           goto e_alloc_failure;
-
-                        top->u.boolean = 1;
-
-                        flags |= flag_next;
-                        break;
-
-                     case 'f':
-
-                        if ((end - state.ptr) < 4 || *(++ state.ptr) != 'a' ||
-                            *(++ state.ptr) != 'l' || *(++ state.ptr) != 's' ||
-                            *(++ state.ptr) != 'e')
-                        {
-                           goto e_unknown_value;
-                        }
-
-                        if (!new_value (&state, &top, &root, &alloc, json_boolean))
-                           goto e_alloc_failure;
-
-                        flags |= flag_next;
-                        break;
-
-                     case 'n':
-
-                        if ((end - state.ptr) < 3 || *(++ state.ptr) != 'u' ||
-                            *(++ state.ptr) != 'l' || *(++ state.ptr) != 'l')
-                        {
-                           goto e_unknown_value;
-                        }
-
-                        if (!new_value (&state, &top, &root, &alloc, json_null))
-                           goto e_alloc_failure;
-
-                        flags |= flag_next;
-                        break;
-
-                     default:
-
-                        if (isdigit (b) || b == '-')
-                        {
-                           if (!new_value (&state, &top, &root, &alloc, json_integer))
-                              goto e_alloc_failure;
-
-                           if (!state.first_pass)
-                           {
-                              while (isdigit (b) || b == '+' || b == '-'
-                                        || b == 'e' || b == 'E' || b == '.')
-                              {
-                                 if ( (++ state.ptr) == end)
-                                 {
-                                    b = 0;
-                                    break;
-                                 }
-
-                                 b = *state.ptr;
-                              }
-
-                              flags |= flag_next | flag_reproc;
-                              break;
-                           }
-
-                           flags &= ~ (flag_num_negative | flag_num_e |
-                                        flag_num_e_got_sign | flag_num_e_negative |
-                                           flag_num_zero);
-
-                           num_digits = 0;
-                           num_fraction = 0;
-                           num_e = 0;
-
-                           if (b != '-')
-                           {
-                              flags |= flag_reproc;
-                              break;
-                           }
-
-                           flags |= flag_num_negative;
-                           continue;
-                        }
-                        else
-                        {  sprintf (error, "%d:%d: Unexpected %c when seeking value", line_and_col, b);
-                           goto e_failed;
-                        }
-                  };
-            };
-         }
-         else
-         {
-            switch (top->type)
-            {
-            case json_object:
-               
-               switch (b)
-               {
-                  whitespace:
-                     continue;
-
-                  case '"':
-
-                     if (flags & flag_need_comma)
-                     {  sprintf (error, "%d:%d: Expected , before \"", line_and_col);
-                        goto e_failed;
-                     }
-
-                     flags |= flag_string;
-
-                     string = (json_char *) top->_reserved.object_mem;
-                     string_length = 0;
-
-                     break;
-                  
-                  case '}':
-
-                     flags = (flags & ~ flag_need_comma) | flag_next;
-                     break;
-
-                  case ',':
-
-                     if (flags & flag_need_comma)
-                     {
-                        flags &= ~ flag_need_comma;
-                        break;
-                     }
-
-                  default:
-                     sprintf (error, "%d:%d: Unexpected `%c` in object", line_and_col, b);
-                     goto e_failed;
-               };
-
-               break;
-
-            case json_integer:
-            case json_double:
-
-               if (isdigit (b))
-               {
-                  ++ num_digits;
-
-                  if (top->type == json_integer || flags & flag_num_e)
-                  {
-                     if (! (flags & flag_num_e))
-                     {
-                        if (flags & flag_num_zero)
-                        {  sprintf (error, "%d:%d: Unexpected `0` before `%c`", line_and_col, b);
-                           goto e_failed;
-                        }
-
-                        if (num_digits == 1 && b == '0')
-                           flags |= flag_num_zero;
-                     }
-                     else
-                     {
-                        flags |= flag_num_e_got_sign;
-                        num_e = (num_e * 10) + (b - '0');
-                        continue;
-                     }
-
-                     top->u.integer = (top->u.integer * 10) + (b - '0');
-                     continue;
-                  }
-
-                  num_fraction = (num_fraction * 10) + (b - '0');
-                  continue;
-               }
-
-               if (b == '+' || b == '-')
-               {
-                  if ( (flags & flag_num_e) && !(flags & flag_num_e_got_sign))
-                  {
-                     flags |= flag_num_e_got_sign;
-
-                     if (b == '-')
-                        flags |= flag_num_e_negative;
-
-                     continue;
-                  }
-               }
-               else if (b == '.' && top->type == json_integer)
-               {
-                  if (!num_digits)
-                  {  sprintf (error, "%d:%d: Expected digit before `.`", line_and_col);
-                     goto e_failed;
-                  }
-
-                  top->type = json_double;
-                  top->u.dbl = (double) top->u.integer;
-
-                  num_digits = 0;
-                  continue;
-               }
-
-               if (! (flags & flag_num_e))
-               {
-                  if (top->type == json_double)
-                  {
-                     if (!num_digits)
-                     {  sprintf (error, "%d:%d: Expected digit after `.`", line_and_col);
-                        goto e_failed;
-                     }
-
-                     top->u.dbl += ((double) num_fraction) / (pow (10.0, (double) num_digits));
-                  }
-
-                  if (b == 'e' || b == 'E')
-                  {
-                     flags |= flag_num_e;
-
-                     if (top->type == json_integer)
-                     {
-                        top->type = json_double;
-                        top->u.dbl = (double) top->u.integer;
-                     }
-
-                     num_digits = 0;
-                     flags &= ~ flag_num_zero;
-
-                     continue;
-                  }
-               }
-               else
-               {
-                  if (!num_digits)
-                  {  sprintf (error, "%d:%d: Expected digit after `e`", line_and_col);
-                     goto e_failed;
-                  }
-
-                  top->u.dbl *= pow (10.0, (double)
-                      (flags & flag_num_e_negative ? - num_e : num_e));
-               }
-
-               if (flags & flag_num_negative)
-               {
-                  if (top->type == json_integer)
-                     top->u.integer = - top->u.integer;
-                  else
-                     top->u.dbl = - top->u.dbl;
-               }
-
-               flags |= flag_next | flag_reproc;
-               break;
-
-            default:
-               break;
-            };
-         }
-
-         if (flags & flag_reproc)
-         {
-            flags &= ~ flag_reproc;
-            -- state.ptr;
-         }
-
-         if (flags & flag_next)
-         {
-            flags = (flags & ~ flag_next) | flag_need_comma;
-
-            if (!top->parent)
-            {
-               /* root value done */
-
-               flags |= flag_done;
-               continue;
-            }
-
-            if (top->parent->type == json_array)
-               flags |= flag_seek_value;
-               
-            if (!state.first_pass)
-            {
-               json_value * parent = top->parent;
-
-               switch (parent->type)
-               {
-                  case json_object:
-
-                     parent->u.object.values
-                        [parent->u.object.length].value = top;
-
-                     break;
-
-                  case json_array:
-
-                     parent->u.array.values
-                           [parent->u.array.length] = top;
-
-                     break;
-
-                  default:
-                     break;
-               };
-            }
-
-            if ( (++ top->parent->u.array.length) > state.uint_max)
-               goto e_overflow;
-
-            top = top->parent;
-
-            continue;
-         }
+        continue;
       }
 
-      alloc = root;
-   }
-
-   return root;
-
-e_unknown_value:
-
-   sprintf (error, "%d:%d: Unknown value", line_and_col);
-   goto e_failed;
-
-e_alloc_failure:
-
-   strcpy (error, "Memory allocation failure");
-   goto e_failed;
-
-e_overflow:
-
-   sprintf (error, "%d:%d: Too long (caught overflow)", line_and_col);
-   goto e_failed;
-
-e_failed:
-
-   if (error_buf)
-   {
-      if (*error)
-         strcpy (error_buf, error);
-      else
-         strcpy (error_buf, "Unknown error");
-   }
-
-   if (state.first_pass)
-      alloc = root;
-
-   while (alloc)
-   {
-      top = alloc->_reserved.next_alloc;
-      state.settings.mem_free (alloc, state.settings.user_data);
-      alloc = top;
-   }
-
-   if (!state.first_pass)
-      json_value_free_ex (&state.settings, root);
-
-   return 0;
-}
-
-json_value * json_parse (const json_char * json, size_t length)
-{
-   json_settings settings = { 0 };
-   return json_parse_ex (&settings, json, length, 0);
-}
-
-void json_value_free_ex (json_settings * settings, json_value * value)
-{
-   json_value * cur_value;
-
-   if (!value)
-      return;
-
-   value->parent = 0;
-
-   while (value)
-   {
-      switch (value->type)
+      if (wcscmp(key.ptr, kn) != 0)
       {
-         case json_array:
+        continue;
+      }
 
-            if (!value->u.array.length)
-            {
-               settings->mem_free (value->u.array.values, settings->user_data);
-               break;
-            }
+      if (!checkType(ki, format, value))
+      {
+        continue;
+      }
 
-            value = value->u.array.values [-- value->u.array.length];
-            continue;
+      found ++;
 
-         case json_object:
+      outValue = va_arg(args, UJObject);
 
-            if (!value->u.object.length)
-            {
-               settings->mem_free (value->u.object.values, settings->user_data);
-               break;
-            }
+      if (outValue != NULL)
+      {
+        *outValue = value;
+      }
+      keyNames[ki] = NULL;
 
-            value = value->u.object.values [-- value->u.object.length].value;
-            continue;
+      if (ki == ks)
+      {
+        ks ++;
+      }
+    }
+  }
 
-         case json_string:
+  va_end(args);
 
-            settings->mem_free (value->u.string.ptr, settings->user_data);
-            break;
-
-         default:
-            break;
-      };
-
-      cur_value = value;
-      value = value->parent;
-      settings->mem_free (cur_value, settings->user_data);
-   }
+  return found;
 }
 
-void json_value_free (json_value * value)
+UJObject UJDecode(const char *input, size_t cbInput, UJHeapFuncs *hf, void **outState, ngx_http_request_t *r)
 {
-   json_settings settings = { 0 };
-   settings.mem_free = default_free;
-   json_value_free_ex (&settings, value);
+  UJObject ret;
+  struct DecoderStateWrapped *ds;
+  void *initialHeap;
+  size_t cbInitialHeap;
+  HeapSlab *slab;
+
+  JSONObjectDecoder decoder = {
+    newString,
+    objectAddKey,
+    arrayAddItem,
+    newTrue,
+    newFalse,
+    newNull,
+    newObject,
+    newArray,
+    newInt,
+    newLong,
+    newDouble,
+    releaseObject,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    0, 
+    NULL
+  };
+
+  if (hf == NULL)
+  {
+    decoder.malloc = malloc;
+    decoder.free = free;
+    decoder.realloc = realloc;
+    cbInitialHeap = 16384;
+    initialHeap = malloc(cbInitialHeap);
+  }
+  else
+  {
+    decoder.malloc = hf->malloc;
+    decoder.free = hf->free;
+    decoder.realloc = hf->realloc;
+    initialHeap = hf->initalHeap;
+    cbInitialHeap = hf->cbInitialHeap;
+  
+    if (cbInitialHeap < sizeof(HeapSlab) + sizeof(struct DecoderStateWrapped))
+    {
+      return NULL;
+    }
+  }
+
+  *outState = NULL;
+
+  slab = (HeapSlab * ) initialHeap;
+  slab->start = (unsigned char *) (slab + 1);
+  slab->offset = slab->start;
+  slab->end = (unsigned char *) initialHeap + cbInitialHeap;
+  slab->size = cbInitialHeap;
+  slab->owned = hf == NULL ? 1 : 0;
+  slab->next = NULL;
+
+  ds = (struct DecoderStateWrapped *) slab->offset;
+  slab->offset += sizeof(struct DecoderStateWrapped);
+  *outState = (void *) ds;
+
+  ds->heap = slab;
+  
+  ds->malloc = decoder.malloc;
+  ds->free = decoder.free;
+  ds->error = NULL; 
+  ds->r = r;
+
+  decoder.prv = (void *) ds;
+
+  ret = (UJObject) JSON_DecodeObject(&decoder, input, cbInput);
+
+  if (ret == NULL)
+  {
+    ds->error = decoder.errorStr;
+  }
+
+  return ret;
 }

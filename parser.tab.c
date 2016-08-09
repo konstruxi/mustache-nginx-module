@@ -84,8 +84,8 @@
 #include "parser.tab.h"	
 
 #define YY_END_OF_BUFFER_CHAR 0
-typedef struct yy_buffer_state *YY_BUFFER_STATE;
-typedef size_t yy_size_t;
+//typedef struct yy_buffer_state *YY_BUFFER_STATE;
+//typedef size_t yy_size_t;
 extern YY_BUFFER_STATE mustache_p__scan_buffer (char *base,yy_size_t size  );
 extern int mustache_p_lex_destroy(void);
 extern int mustache_p_get_lineno(void);
@@ -1843,7 +1843,7 @@ uintmax_t             mustache_render (mustache_api_t *api, void *userdata, must
 	for(p = template; p; p = p->next){
 		switch(p->type){
 			case TOKEN_TEXT:
-				if(api->write(api, userdata, p->token_simple.text, p->token_simple.text_length) == 0)
+				if(api->write(api, userdata , p->token_simple.text, p->token_simple.text_length) == 0)
 					return 0;
 				break;
 			case TOKEN_VARIABLE:

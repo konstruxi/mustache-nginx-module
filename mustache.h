@@ -18,7 +18,7 @@ typedef struct mustache_token_section_t   mustache_token_section_t;      ///< To
  * @retval 0      No more data (EOF)
  * @retval >0     Successful call, number indicate number of bytes read
  */
-typedef uintmax_t (*mustache_api_read)   (mustache_api_t *api, void *userdata, char *buffer, uintmax_t buffer_size);
+typedef uintmax_t (*mustache_api_read)   (mustache_api_t *api, void *userdata, char *buffer, ngx_int_t buffer_size);
 
 /** Write callback. Save input data in desired place.
  * @param  api         Current api set
@@ -28,7 +28,7 @@ typedef uintmax_t (*mustache_api_read)   (mustache_api_t *api, void *userdata, c
  * @retval 0      Error occured
  * @retval >0     Successful call
  */
-typedef uintmax_t (*mustache_api_write)  (mustache_api_t *api, void *userdata, char *buffer, uintmax_t buffer_size);
+typedef uintmax_t (*mustache_api_write)  (mustache_api_t *api, void *userdata, char *buffer, ngx_int_t buffer_size);
 
 /** Get variable callback. User call ->write api to dump variable value to output, or do nothing.
  * @param  api         Current api set
