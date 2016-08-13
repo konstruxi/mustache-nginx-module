@@ -58,7 +58,8 @@ uintmax_t  ngx_mustache_variable(ngx_http_request_t *r, ngx_buf_t *b, mustache_t
     ctow(token->text, (wchar_t *) &token_text);
     
     // find key in context 
-    UJObject* val = resolve_value(token_text, scope, parent, grandparent, meta, r, 1);
+
+    UJObject* val = resolve_value(token_text, scope, parent, grandparent, meta, r, 1, b);
 
     if(val != NULL){
       if (UJIsInteger(val)) {
@@ -88,7 +89,7 @@ uintmax_t  ngx_mustache_section(ngx_http_request_t *r, ngx_buf_t *b, mustache_to
     wchar_t token_text[len + 1];
     ctow(token->name, (wchar_t *) &token_text);
 
-    UJObject* val = resolve_value(token_text, scope, parent, grandparent, meta, r, 0);
+    UJObject* val = resolve_value(token_text, scope, parent, grandparent, meta, r, 0, NULL);
 
     // negative condition
     if (token->inverted) {

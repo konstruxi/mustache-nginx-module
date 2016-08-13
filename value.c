@@ -1,5 +1,5 @@
 
-UJObject* resolve_value(wchar_t *string, UJObject *scope, UJObject *parent, UJObject *grandparent, UJObject *meta, ngx_http_request_t *r, int fn) {
+UJObject* resolve_value(wchar_t *string, UJObject *scope, UJObject *parent, UJObject *grandparent, UJObject *meta, ngx_http_request_t *r, int fn, ngx_buf_t* b) {
   size_t offset = 0;
   size_t size = wcslen(string);
   UJObject *current = scope;
@@ -15,6 +15,17 @@ UJObject* resolve_value(wchar_t *string, UJObject *scope, UJObject *parent, UJOb
       current = meta;
       offset += 5;
       i += 5;
+    }
+    if (string[i+0] == 't' && string[i+1] == 'h' && string[i+2] == 'i' && string[i+3] == 's') {
+      if (i == size - 4) {
+        current = scope;
+        offset += 4;
+        i += 4;
+      } else if (string[i + 4] == ':') {
+        current = scope;
+        offset += 5;
+        i += 5;
+      }
     }
 
     // look ahead for special keywords
@@ -40,19 +51,22 @@ UJObject* resolve_value(wchar_t *string, UJObject *scope, UJObject *parent, UJOb
     // {#parent:by:name}    aka   parent[this[name]] 
     // {#by:name}           aka   this[name]
     if (((string[i] == 'b' && string[i + 1] == 'y') 
-      || (string[i] == 'i' && string[i + 1] == 's')) 
+      || (string[i] == 'i' && string[i + 1] == 's') 
+      || (string[i] == 'i' && string[i + 1] == 'n') 
+      || (string[i] == 'e' && string[i + 1] == 'q')) 
       &&  string[i + 2] == ':') {
 
 
       //fprintf(stdout, "FOUND op by %d \n", i);
 
-      op = string[i] == 'b' ? 0 : 1;
+      op = string[i] == 'b' ? 0 : string[i] == 'e' ? 3 : string[i + 1] == 's' ? 1 : 2;
       last = current;
       current = scope;
 
 
-      i += 3;
-      offset = i;
+      i += 2;
+      offset += 3;
+      continue;
     }
     
     //UJObject unwrapped;
@@ -154,6 +168,9 @@ UJObject* resolve_value(wchar_t *string, UJObject *scope, UJObject *parent, UJOb
         if (!UJIsInteger(current) || UJNumericInt(last) != UJNumericInt(current))
           return NULL;
       }
+    // perform in
+    } else if (op == 2) {
+      //...
     }
   }
   // strings can be transformed by fns
@@ -175,7 +192,7 @@ UJObject* resolve_value(wchar_t *string, UJObject *scope, UJObject *parent, UJOb
       if (p == NULL) {
           return NULL;
       }
-
+      
       ngx_escape_html((u_char *) p, (u_char *) multibyte, multibytes);
       p[len] = '\0';
       MBStringItem  *ret = ngx_pcalloc(r->pool, sizeof(MBStringItem));
@@ -224,14 +241,16 @@ UJObject* resolve_value(wchar_t *string, UJObject *scope, UJObject *parent, UJOb
     int len = ((StringItem *) current)->str.cchLen;
     char multibyte[len * 2];
     int multibytes = wcstombs(multibyte, ((StringItem *) current)->str.ptr, len * 2);
-
+    if (multibytes == 999) fprintf(stdout, "HELLO\n");
     // parse time from iso8601
     timestamp_t ts;
-    timestamp_parse(multibyte, multibytes, &ts);
+    if (timestamp_parse(multibyte, multibytes, &ts) != 0)
+      fprintf(stdout, "Error parsing date\n");
     
     struct tm        tm;
-    ngx_gmtime(ts.sec, &tm);
-
+    memset(&tm, 0, sizeof (struct tm));
+    ngx_libc_gmtime(ts.sec, &tm);
+    
     
     u_char *p = ngx_palloc(r->pool, 256);
     if (p == NULL) {
@@ -240,12 +259,13 @@ UJObject* resolve_value(wchar_t *string, UJObject *scope, UJObject *parent, UJOb
     
     MBStringItem  *ret = ngx_pcalloc(r->pool, sizeof(MBStringItem));
     ret->item.type = UJT_MBString;
+    ret->str.cchLen = strftime((char *) p, 255,
+                               (char *) "%a %b %e %H:%M %Y\0", &tm);
     ret->str.ptr = p;
-    ret->str.cchLen = strftime((char *) p, 256,
-                               (char *) "%a %b %e %H:%M:%S %y %Y 444", &tm);
-
-    if (ret->str.cchLen != 0)
+    if (ret->str.cchLen != 0) {
+      *(p + ret->str.cchLen) = '\0';
       current = (UJObject *) ret;
+    }
     
   // parse & format date
   } else if (fn == 4) {

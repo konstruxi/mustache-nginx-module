@@ -16,8 +16,6 @@ typedef struct {
 } timestamp_t;
 
 int         timestamp_parse            (const char *str, size_t len, timestamp_t *tsp);
-size_t      timestamp_format           (char *dst, size_t len, const timestamp_t *tsp);
-size_t      timestamp_format_precision (char *dst, size_t len, const timestamp_t *tsp, int precision);
 int         timestamp_compare          (const timestamp_t *tsp1, const timestamp_t *tsp2);
 bool        timestamp_valid            (const timestamp_t *tsp);
 struct tm * timestamp_to_tm_utc        (const timestamp_t *tsp, struct tm *tmp);
@@ -196,4 +194,12 @@ timestamp_parse(const char *str, size_t len, timestamp_t *tsp) {
     tsp->nsec   = nsec;
     tsp->offset = offset;
     return 0;
+}
+
+
+
+
+void time_parse_iso8601(struct tm *tm, const char *s) {
+    memset(tm, 0, sizeof (struct tm));
+    strptime(s, "%FT%T%z", tm);
 }

@@ -273,6 +273,8 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
     //void *iter = UJBeginArray(meta); 
     //UJIterArray(&iter, &m);
     
+
+
  
       //fprintf(stdout, "Rendering\n");
       ngx_mustache_render(r, b, before_template, meta, json, NULL, NULL);
