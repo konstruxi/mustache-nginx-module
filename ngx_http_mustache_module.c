@@ -225,6 +225,10 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
     fprintf(stdout, "ERROR: %s\n", error);
   //fprintf(stdout, "parsed json %p ~%.*s~ \n\n\n\n\n", json, (int) ngx_buf_size(out->buf), json_source);
   
+
+
+
+
   //fprintf(stdout, "raw html is not empty\n");
 
   b = ngx_create_temp_buf(r->pool, 4096 * 10);
@@ -273,7 +277,6 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
     //void *iter = UJBeginArray(meta); 
     //UJIterArray(&iter, &m);
     
-
 
  
       //fprintf(stdout, "Rendering\n");

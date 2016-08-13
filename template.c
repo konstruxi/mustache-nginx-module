@@ -14,15 +14,27 @@ ngx_get_mustache_template(ngx_http_request_t *r, ngx_pool_t* pool, u_char *path,
   ngx_uint_t views_variable_hash = ngx_hash_key(views_variable.data, views_variable.len);
   ngx_http_variable_value_t *prefix = ngx_http_get_variable( r, &views_variable, views_variable_hash  );
 
-  char* data = ngx_pnalloc(conf->pool, size + prefix->len + 6);
-  memcpy(data, prefix->data, prefix->len);
-  memcpy(data + prefix->len, path, size);
-  data[prefix->len + size] = '\0';
+  char* data = ngx_pnalloc(conf->pool, size + prefix->len + 6 + ngx_cycle->conf_prefix.len);
+
+  //fprintf(stdout, "Parsing file %s\n", views_variable.data);
+
+  int total = 0;
+  if (*(prefix->data) == '/') {
+    memcpy(data, prefix->data, prefix->len);
+    total = prefix->len + size;
+  } else {
+    memcpy(data, ngx_cycle->conf_prefix.data, ngx_cycle->conf_prefix.len);
+    memcpy(data + ngx_cycle->conf_prefix.len, prefix->data, prefix->len);
+    memcpy(data + ngx_cycle->conf_prefix.len + prefix->len, path, size);
+    total = prefix->len + ngx_cycle->conf_prefix.len + size;
+
+  }
+  data[total] = '\0';
 
 
   int cached_i = 0;
   for (; cached_i < 100 && conf->filenames[cached_i] != NULL; cached_i++) {
-    if (strncmp(conf->filenames[cached_i], data, prefix->len + size + 1 ) == 0) {
+    if (strncmp(conf->filenames[cached_i], data, total ) == 0) {
       //fprintf(stdout, "Found cached template\n");
       return conf->results[cached_i];
     }
@@ -73,7 +85,7 @@ ngx_get_mustache_template(ngx_http_request_t *r, ngx_pool_t* pool, u_char *path,
   conf->filenames[cached_i] = data;
   conf->results[cached_i] = template;
 
-  fprintf(stdout, "Parsed template %lu\n", strlen(base));
+  // fprintf(stdout, "Parsed template %lu\n", strlen(base));
   return template;
   
 failed:
