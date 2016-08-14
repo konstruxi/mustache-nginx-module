@@ -309,6 +309,7 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
   //b->start = b->pos;
   //b->end = b->last;
   b->memory = 1;
+  *(b->last) = '\0';
 
   if (!r->header_sent) {
     r->headers_out.content_type.data = (u_char *) "text/html";
