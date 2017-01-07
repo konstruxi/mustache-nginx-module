@@ -193,7 +193,8 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
 
   char *json_source = (char *) out->buf->pos;
   // Bail out if not json
-  if (json_source == NULL || (json_source[0] != '[' && json_source[0] != '{')) {
+  if (out->buf->last == NULL || (out->buf->last - out->buf->pos) == 0 || 
+         json_source == NULL || (json_source[0] != '[' && json_source[0] != '{')) {
     //fprintf(stdout, "not json\n");
     return ngx_http_next_request_body_filter(r, out);
   }
