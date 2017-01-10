@@ -106,7 +106,7 @@ UJObject* resolve_value(wchar_t *string, UJObject *scope, UJObject *parent, UJOb
           return NULL;
         }
       } else if (UJIsInteger(current)) {
-        int n = ngx_atoi(string + offset, i - offset);
+        int n = ngx_atoi((u_char *) string + offset, i - offset);
         if(UJNumericInt(current) != n){
           return NULL;
         }

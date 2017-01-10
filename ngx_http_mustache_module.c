@@ -199,6 +199,22 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
     return ngx_http_next_request_body_filter(r, out);
   }
 
+  //lame content-negotiation (without regard for qvalues)
+  if(r->headers_in.accept) {
+    u_char  *accept = r->headers_in.accept->value.data;
+    u_char  *accept_html = ngx_strnstr(accept, "text/html", r->headers_in.accept->value.len);
+    u_char  *accept_json = ngx_strnstr(accept, "application/json", r->headers_in.accept->value.len);
+    if (accept_json != NULL && (accept_html == NULL || accept_html > accept_json)) {
+      r->headers_out.content_type.data = (u_char *) "application/json";
+      r->headers_out.content_type.len = sizeof("application/json") - 1;
+      r->headers_out.content_type_lowcase = NULL;
+
+      return ngx_http_next_request_body_filter(r, out);
+    }
+  }
+
+
+
   mustache_api_t api = {
       .read         = &ngx_mustache_read,
       .error        = &tests_error,
@@ -222,8 +238,12 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
   UJObject json = UJDecode(json_source, ngx_buf_size(out->buf), NULL, &state, r);
 
   const char *error = UJGetError(state);
-  if (error != NULL)
+  if (error != NULL) {
     fprintf(stdout, "ERROR: %s\n", error);
+    return ngx_http_next_request_body_filter(r, out);
+
+  }
+
   //fprintf(stdout, "parsed json %p ~%.*s~ \n\n\n\n\n", json, (int) ngx_buf_size(out->buf), json_source);
   
 
@@ -315,8 +335,6 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
   if (!r->header_sent) {
     r->headers_out.content_type.data = (u_char *) "text/html";
     r->headers_out.content_type.len = sizeof("text/html") - 1;
-    r->headers_out.content_type_len = sizeof("text/html") - 1;
-
     r->headers_out.content_type_lowcase = NULL;
   }
     
