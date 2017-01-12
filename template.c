@@ -1,6 +1,6 @@
 
 mustache_template_t   *
-ngx_get_mustache_template(ngx_http_request_t *r, ngx_pool_t* pool, u_char *path, size_t size, mustache_api_t *api) {
+ngx_get_mustache_template(ngx_http_request_t *r, ngx_pool_t* pool, u_char *path, size_t size, u_char *dir, size_t dir_size, mustache_api_t *api) {
   ngx_str_t                   name;
   ngx_file_t                  file;
   ngx_file_info_t             fi;
@@ -14,26 +14,41 @@ ngx_get_mustache_template(ngx_http_request_t *r, ngx_pool_t* pool, u_char *path,
   ngx_uint_t views_variable_hash = ngx_hash_key(views_variable.data, views_variable.len);
   ngx_http_variable_value_t *prefix = ngx_http_get_variable( r, &views_variable, views_variable_hash  );
 
-  char* data = ngx_pnalloc(conf->pool, size + prefix->len + 6 + ngx_cycle->conf_prefix.len);
+  char* data = ngx_pnalloc(conf->pool, size + prefix->len + 6 + ngx_cycle->conf_prefix.len + 1 + dir_size);
 
   //fprintf(stdout, "Parsing file %s\n", views_variable.data);
 
   int total = 0;
   if (*(prefix->data) == '/') {
-    memcpy(data, prefix->data, prefix->len);
     total = prefix->len + size;
+    memcpy(data, prefix->data, prefix->len);
+    if (dir_size > 0) {
+      memcpy(data + prefix->len, dir, dir_size);
+      memcpy(data + prefix->len + dir_size, "/", 1);
+      memcpy(data + prefix->len + size + 1, path, size);
+      total += dir_size + 1;
+    } else {
+      memcpy(data + prefix->len, path, size);
+    }
   } else {
     memcpy(data, ngx_cycle->conf_prefix.data, ngx_cycle->conf_prefix.len);
     memcpy(data + ngx_cycle->conf_prefix.len, prefix->data, prefix->len);
-    memcpy(data + ngx_cycle->conf_prefix.len + prefix->len, path, size);
     total = prefix->len + ngx_cycle->conf_prefix.len + size;
-
+    if (dir_size > 0) {
+      memcpy(data + ngx_cycle->conf_prefix.len + prefix->len, dir, dir_size);
+      memcpy(data + ngx_cycle->conf_prefix.len + prefix->len + dir_size, "/", 1);
+      memcpy(data + ngx_cycle->conf_prefix.len + prefix->len + dir_size + 1, path, size);
+      total += dir_size + 1;
+    } else {
+      memcpy(data + ngx_cycle->conf_prefix.len + prefix->len, path, size);
+    }
   }
   data[total] = '\0';
 
 
   int cached_i = 0;
   for (; cached_i < 100 && conf->filenames[cached_i] != NULL; cached_i++) {
+    //fprintf(stdout, "Compare [%s] [%s]\n", data, conf->filenames[cached_i]);
     if (strncmp(conf->filenames[cached_i], data, total ) == 0) {
       //fprintf(stdout, "Found cached template\n");
       return conf->results[cached_i];
@@ -52,7 +67,7 @@ ngx_get_mustache_template(ngx_http_request_t *r, ngx_pool_t* pool, u_char *path,
       if (err != NGX_ENOENT) {
           fprintf(stdout, " \"%s\" failed\n", name.data);
       }
-      return NULL;
+      goto failed;
   }
 
   if (ngx_fd_info(file.fd, &fi) == NGX_FILE_ERROR) {
@@ -89,7 +104,9 @@ ngx_get_mustache_template(ngx_http_request_t *r, ngx_pool_t* pool, u_char *path,
   return template;
   
 failed:
-  //fprintf(stdout, "Failed\n");
+  conf->filenames[cached_i] = data;
+  conf->results[cached_i] = NULL;
+  //fprintf(stdout, "Failed %s\n", data);
   return NULL;
 }
 
@@ -97,6 +114,10 @@ mustache_template_t   *ngx_get_mustache_template_by_variable_name(ngx_http_reque
   
   // get parsed mustache template by variable name
 
+
+  ngx_str_t resource_variable = ngx_string("resource");
+  ngx_uint_t resource_variable_hash = ngx_hash_key(resource_variable.data, resource_variable.len);
+  ngx_http_variable_value_t *prefix = ngx_http_get_variable( r, &resource_variable, resource_variable_hash  );
 
   ngx_uint_t html_variable_hash = ngx_hash_key(html_variable->data, html_variable->len);
   ngx_http_variable_value_t *raw_html = ngx_http_get_variable( r, html_variable, html_variable_hash  );
@@ -110,7 +131,10 @@ mustache_template_t   *ngx_get_mustache_template_by_variable_name(ngx_http_reque
       if (raw_html->data[i] == '\n')
         break;
     if (i == raw_html->len) {
-      return ngx_get_mustache_template(r, pool, raw_html->data, raw_html->len, api);
+      mustache_template_t *template = ngx_get_mustache_template(r, pool, raw_html->data, raw_html->len, prefix->data, prefix->len, api);
+      if (template != NULL)
+        return template;
+      return ngx_get_mustache_template(r, pool, raw_html->data, raw_html->len, NULL, 0, api);
     }
   }
   return NULL;

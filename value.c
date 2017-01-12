@@ -16,7 +16,7 @@ UJObject* resolve_value(wchar_t *string, UJObject *scope, UJObject *parent, UJOb
       ngx_str_t request_variable;
 
       char multibyte[32];
-      request_variable.data = &multibyte;
+      request_variable.data = (u_char *) &multibyte;
       request_variable.len = 0;
 
       while (i + 5 + request_variable.len < size && string[i + 5 + request_variable.len] != ':') {
@@ -274,7 +274,6 @@ UJObject* resolve_value(wchar_t *string, UJObject *scope, UJObject *parent, UJOb
     int len = ((StringItem *) current)->str.cchLen;
     char multibyte[len * 2];
     int multibytes = wcstombs(multibyte, ((StringItem *) current)->str.ptr, len * 2);
-    if (multibytes == 999) fprintf(stdout, "HELLO\n");
     // parse time from iso8601
     timestamp_t ts;
     if (timestamp_parse(multibyte, multibytes, &ts) != 0)

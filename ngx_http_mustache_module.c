@@ -27,7 +27,6 @@
  *
  */
 
-
 #define HELPERS true
 #include <ngx_config.h>
 #include <ngx_core.h>
@@ -213,8 +212,7 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
     }
   }
 
-
-
+  
   mustache_api_t api = {
       .read         = &ngx_mustache_read,
       .error        = &tests_error,
