@@ -10,6 +10,39 @@ UJObject* resolve_value(wchar_t *string, UJObject *scope, UJObject *parent, UJOb
 
   size_t i = offset;
   for (; i < size; i++) {
+
+    // resolve nginx variable
+    if (string[i+0] == 'v' && string[i+1] == 'a' && string[i+2] == 'r' && string[i+3] == 's' && string[i+4] == ':') {
+      ngx_str_t request_variable;
+
+      char multibyte[32];
+      request_variable.data = &multibyte;
+      request_variable.len = 0;
+
+      while (i + 5 + request_variable.len < size && string[i + 5 + request_variable.len] != ':') {
+        multibyte[request_variable.len] = string[i + 5 + request_variable.len];
+        request_variable.len++;
+      }
+
+      multibyte[request_variable.len] = '\0';
+
+      ngx_uint_t request_variable_hash = ngx_hash_key(request_variable.data, request_variable.len);
+      ngx_http_variable_value_t *request_value = ngx_http_get_variable( r, &request_variable, request_variable_hash  );
+
+      if (request_value->len == 0 || request_value->not_found) {
+        return NULL;
+      } else {
+        MBStringItem  *ret = ngx_pcalloc(r->pool, sizeof(MBStringItem));
+        ret->item.type = UJT_MBString;
+        ret->str.ptr = request_value->data;
+        ret->str.cchLen = request_value->len;
+        current = (UJObject *) ret; 
+      }
+
+      i += 5 + request_variable.len + 1;
+      offset += 5 + request_variable.len + 1;
+    }
+
     // look ahead for special keywords
     if (string[i+0] == 'm' && string[i+1] == 'e' && string[i+2] == 't' && string[i+3] == 'a' && string[i+4] == ':') {
       current = meta;
