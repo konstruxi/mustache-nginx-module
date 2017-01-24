@@ -33,11 +33,14 @@
 #include <ngx_http.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <iconv.h>
 #include "parser.lex.c"
 #include "parser.tab.c"
 #include "json.c"
 #include "json.h"
 #include "timestamp.c"
+
+#include <locale.h>
 
 static ngx_int_t ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *in);
 
@@ -165,6 +168,7 @@ ngx_http_mustache_create_conf(ngx_conf_t *cf)
 static ngx_int_t
 ngx_http_mustache_init(ngx_conf_t *cf)
 { 
+    setlocale(LC_ALL, "");
     ngx_http_next_request_body_filter = ngx_http_top_body_filter;
     ngx_http_top_body_filter = ngx_http_mustache_body_filter;
     return NGX_OK;
@@ -243,10 +247,6 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
   }
 
   //fprintf(stdout, "parsed json %p ~%.*s~ \n\n\n\n\n", json, (int) ngx_buf_size(out->buf), json_source);
-  
-
-
-
 
   //fprintf(stdout, "raw html is not empty\n");
 
@@ -296,7 +296,6 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
     //void *iter = UJBeginArray(meta); 
     //UJIterArray(&iter, &m);
     
-
  
       //fprintf(stdout, "Rendering\n");
       ngx_mustache_render(r, b, before_template, meta, json, NULL, NULL);
@@ -320,6 +319,7 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
     ngx_mustache_render(r, b, after_template, meta, meta, NULL, NULL);
   }
 
+
   if (state)
   UJFree(state);
   if (metastate)
@@ -336,6 +336,8 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
     r->headers_out.content_type_lowcase = NULL;
   }
     
+
+
 
   return ngx_http_next_request_body_filter(r, cl);
 }

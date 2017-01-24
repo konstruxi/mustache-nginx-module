@@ -145,10 +145,11 @@ UJObject* resolve_value(wchar_t *string, UJObject *scope, UJObject *parent, UJOb
         }
       // compare strings
       } else if (UJIsString(current)) {
-        if(wcsncmp(((StringItem *) current)->str.ptr, string + offset, i - offset) != 0){
+        if(wcsncmp(((StringItem *) current)->str.ptr, string + offset, i - offset) != 0
+                || ((StringItem *) current)->str.cchLen != i - offset + 1){
           if (last != NULL) {
             // let it not escape 
-            if (wcsncmp(string + offset, L"HTML", 6) == 0) {
+            if (wcsncmp(string + offset, L"HTML", 4) == 0) {
               fn = 0;
             } else if (wcsncmp(string + offset, L"JSON", 4) == 0) {
               fn = 2;
@@ -215,6 +216,8 @@ UJObject* resolve_value(wchar_t *string, UJObject *scope, UJObject *parent, UJOb
     int len = ((StringItem *) current)->str.cchLen;
     char multibyte[len * 2];
     int multibytes = wcstombs(multibyte, ((StringItem *) current)->str.ptr, len * 2);
+
+    //fprintf(stdout, "escaping [%d / %d] [%.*S]\n", multibytes, len,  len * 2, ((StringItem *) current)->str.ptr);
 
     int escape = ngx_escape_html(NULL, (u_char *) multibyte, multibytes);
 
