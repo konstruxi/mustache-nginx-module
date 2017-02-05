@@ -107,6 +107,9 @@ UJObject* resolve_value(wchar_t *string, UJObject *scope, UJObject *parent, UJOb
     // scan string for property access
     if (i == size - 1 || string[i + 1] == ':' || string[i + 1] == '.') {
 
+
+      if (current == NULL)
+        return NULL;
       // step into first element of array
       if (UJIsArray(current)) {
         current = (UJObject *) ((ArrayEntry *) ((ArrayItem *) current)->head)->item;
@@ -147,23 +150,30 @@ UJObject* resolve_value(wchar_t *string, UJObject *scope, UJObject *parent, UJOb
       } else if (UJIsString(current)) {
         if(wcsncmp(((StringItem *) current)->str.ptr, string + offset, i - offset) != 0
                 || ((StringItem *) current)->str.cchLen != i - offset + 1){
-          if (last != NULL) {
-            // let it not escape 
-            if (wcsncmp(string + offset, L"HTML", 4) == 0) {
-              fn = 0;
-            } else if (wcsncmp(string + offset, L"JSON", 4) == 0) {
-              fn = 2;
-            } else if (wcsncmp(string + offset, L"DATETIME", 8) == 0) {
-              fn = 3;
-            } else if (wcsncmp(string + offset, L"DATE", 4) == 0) {
-              fn = 4;
-            }
-            //fprintf(stdout, "BREAKING THIS TIME %ls\n", string + offset);
+
+          // let it not escape 
+          if (wcsncmp(string + offset, L"HTML", 4) == 0 && offset + 4 == size) {
+            fn = 0;
+            break;
+          } else if (wcsncmp(string + offset, L"JSON", 4) == 0 && offset + 4 == size) {
+            fn = 2;
+            break;
+          } else if (wcsncmp(string + offset, L"DATETIME", 8) == 0 && offset + 8 == size) {
+            fn = 3;
+            break;
+          } else if (wcsncmp(string + offset, L"DATE", 4) == 0 && offset + 4 == size) {
+            fn = 4;
+            break;
+          } else if (wcsncmp(string + offset, L"XML", 3) == 0 && offset + 3 == size) {
+            fn = 5;
             break;
           }
+
           return NULL;
         }
       // object key access
+      } else {
+        return NULL;
       }
     }
   }
@@ -210,124 +220,146 @@ UJObject* resolve_value(wchar_t *string, UJObject *scope, UJObject *parent, UJOb
   // strings can be transformed by fns
   if (!UJIsString(current)) {
 
-  }
-  // escaped html
-  else if (fn == 1) {
+  } else if (fn > 0) {
     int len = ((StringItem *) current)->str.cchLen;
     char multibyte[len * 2];
     int multibytes = wcstombs(multibyte, ((StringItem *) current)->str.ptr, len * 2);
 
-    //fprintf(stdout, "escaping [%d / %d] [%.*S]\n", multibytes, len,  len * 2, ((StringItem *) current)->str.ptr);
+    // escaped html
+    if (fn == 1) {
+      //fprintf(stdout, "escaping [%d / %d] [%.*S]\n", multibytes, len,  len * 2, ((StringItem *) current)->str.ptr);
 
-    int escape = ngx_escape_html(NULL, (u_char *) multibyte, multibytes);
+      int escape = ngx_escape_html(NULL, (u_char *) multibyte, multibytes);
 
-    if (escape > 0) {
-      //fprintf(stdout, "got to escape html len %d\n", escape);
-      int len = multibytes + escape;
-      u_char *p = ngx_palloc(r->pool, len + 1);
+      if (escape > 0) {
+        //fprintf(stdout, "got to escape html len %d\n", escape);
+        int len = multibytes + escape;
+        u_char *p = ngx_palloc(r->pool, len + 1);
+        if (p == NULL) {
+            return NULL;
+        }
+        
+        ngx_escape_html((u_char *) p, (u_char *) multibyte, multibytes);
+        p[len] = '\0';
+        MBStringItem  *ret = ngx_pcalloc(r->pool, sizeof(MBStringItem));
+        ret->item.type = UJT_MBString;
+        ret->str.ptr = p;
+        ret->str.cchLen = len;
+        current = (UJObject *) ret;
+        
+        //fprintf(stdout, "got to escape html %s\n", p);
+
+      }
+      
+    // escape json
+    } else if (fn == 2) {
+
+      //current = string_transforming_function(current, &ngx_escape_json);
+      int escape = ngx_escape_json(NULL, (u_char *) multibyte, multibytes);
+      
+      // need to escape quotes?
+      if (escape > 0) {
+        // fprintf(stdout, "got to escape json %d\n", escape);
+        int len = sizeof("''") - 1
+            + multibytes
+            + escape + 1;
+        
+        u_char *p = ngx_palloc(r->pool, len + 1);
+        if (p == NULL) {
+            return NULL;
+        }
+
+        ngx_escape_json((u_char *) p, (u_char *) multibyte, multibytes);
+
+        MBStringItem  *ret = ngx_pcalloc(r->pool, sizeof(MBStringItem));
+        ret->item.type = UJT_MBString;
+        ret->str.ptr = p;
+        ret->str.cchLen = len;
+        current = (UJObject *) ret;  
+      }
+    // format date & time
+    } else if (fn == 3) {
+      // parse time from iso8601
+      timestamp_t ts;
+      if (timestamp_parse(multibyte, multibytes, &ts) != 0)
+        fprintf(stdout, "Error parsing date\n");
+      
+      struct tm        tm;
+      memset(&tm, 0, sizeof (struct tm));
+      ngx_libc_gmtime(ts.sec, &tm);
+      
+      
+      u_char *p = ngx_palloc(r->pool, 256);
       if (p == NULL) {
           return NULL;
       }
       
-      ngx_escape_html((u_char *) p, (u_char *) multibyte, multibytes);
-      p[len] = '\0';
+      MBStringItem  *ret = ngx_pcalloc(r->pool, sizeof(MBStringItem));
+      ret->item.type = UJT_MBString;
+      ret->str.cchLen = strftime((char *) p, 255,
+                                 (char *) "%a %b %e %H:%M %Y\0", &tm);
+      ret->str.ptr = p;
+      if (ret->str.cchLen != 0) {
+        *(p + ret->str.cchLen) = '\0';
+        current = (UJObject *) ret;
+      }
+      
+    // parse & format date
+    } else if (fn == 4) {
+      // parse time from iso8601
+      timestamp_t ts;
+      timestamp_parse(multibyte, multibytes, &ts);
+      ngx_tm_t tm;
+      ngx_gmtime(ts.sec, &tm);
+
+      u_char *p = ngx_palloc(r->pool, sizeof("yyyy-mm-dd") - 1);
+      if (p == NULL) {
+          return NULL;
+      }
+
+      ngx_sprintf(p, "%04d-%02d-%02d", tm.ngx_tm_year, tm.ngx_tm_mon,
+                  tm.ngx_tm_mday);
+
       MBStringItem  *ret = ngx_pcalloc(r->pool, sizeof(MBStringItem));
       ret->item.type = UJT_MBString;
       ret->str.ptr = p;
-      ret->str.cchLen = len;
+      ret->str.cchLen = sizeof("yyyy-mm-dd") - 1;;
+
       current = (UJObject *) ret;
-      
-      //fprintf(stdout, "got to escape html %s\n", p);
 
-    }
-    
-  // escape json
-  } else if (fn == 2) {
+    // unwrap top level XML root node   
+    } else if (fn == 5) {
 
-    //current = string_transforming_function(current, &ngx_escape_json);
+      int start = -1;
+      int finish = -1;
+      int i = 0;
 
-    int len = ((StringItem *) current)->str.cchLen;
-    char multibyte[len * 2];
-    int multibytes = wcstombs(multibyte, ((StringItem *) current)->str.ptr, len * 2);
+      // naively trim anything except between outermost > < pair
+      for (; i < multibytes; i++) {
+        if (start == -1 && multibyte[i] == '>' && i < multibytes - 1) {
+          start = i + 1;
+        } else if (start > -1 && multibyte[i] == '<') {
+          finish = i - 1;
+        }
+      }
+      if (start == multibytes || finish == -1 || start == -1) 
+        return NULL;
 
-    int escape = ngx_escape_json(NULL, (u_char *) multibyte, multibytes);
-    
-    // need to escape quotes?
-    if (escape > 0) {
-      // fprintf(stdout, "got to escape json %d\n", escape);
-      int len = sizeof("''") - 1
-          + multibytes
-          + escape + 1;
-      
-      u_char *p = ngx_palloc(r->pool, len + 1);
+      int newlen = finish - start;
+      u_char *p = ngx_palloc(r->pool, newlen + 1);
       if (p == NULL) {
           return NULL;
       }
 
-      ngx_escape_json((u_char *) p, (u_char *) multibyte, multibytes);
+      ngx_memcpy(p, multibyte + start, newlen);
+      p[newlen] = '\0';
 
       MBStringItem  *ret = ngx_pcalloc(r->pool, sizeof(MBStringItem));
       ret->item.type = UJT_MBString;
       ret->str.ptr = p;
-      ret->str.cchLen = len;
+      ret->str.cchLen = newlen;
       current = (UJObject *) ret;  
     }
-  // format date & time
-  } else if (fn == 3) {
-    int len = ((StringItem *) current)->str.cchLen;
-    char multibyte[len * 2];
-    int multibytes = wcstombs(multibyte, ((StringItem *) current)->str.ptr, len * 2);
-    // parse time from iso8601
-    timestamp_t ts;
-    if (timestamp_parse(multibyte, multibytes, &ts) != 0)
-      fprintf(stdout, "Error parsing date\n");
-    
-    struct tm        tm;
-    memset(&tm, 0, sizeof (struct tm));
-    ngx_libc_gmtime(ts.sec, &tm);
-    
-    
-    u_char *p = ngx_palloc(r->pool, 256);
-    if (p == NULL) {
-        return NULL;
-    }
-    
-    MBStringItem  *ret = ngx_pcalloc(r->pool, sizeof(MBStringItem));
-    ret->item.type = UJT_MBString;
-    ret->str.cchLen = strftime((char *) p, 255,
-                               (char *) "%a %b %e %H:%M %Y\0", &tm);
-    ret->str.ptr = p;
-    if (ret->str.cchLen != 0) {
-      *(p + ret->str.cchLen) = '\0';
-      current = (UJObject *) ret;
-    }
-    
-  // parse & format date
-  } else if (fn == 4) {
-    int len = ((StringItem *) current)->str.cchLen;
-    char multibyte[len * 2];
-    int multibytes = wcstombs(multibyte, ((StringItem *) current)->str.ptr, len * 2);
-
-    // parse time from iso8601
-    timestamp_t ts;
-    timestamp_parse(multibyte, multibytes, &ts);
-    ngx_tm_t tm;
-    ngx_gmtime(ts.sec, &tm);
-
-    u_char *p = ngx_palloc(r->pool, sizeof("yyyy-mm-dd") - 1);
-    if (p == NULL) {
-        return NULL;
-    }
-
-    ngx_sprintf(p, "%04d-%02d-%02d", tm.ngx_tm_year, tm.ngx_tm_mon,
-                tm.ngx_tm_mday);
-
-    MBStringItem  *ret = ngx_pcalloc(r->pool, sizeof(MBStringItem));
-    ret->item.type = UJT_MBString;
-    ret->str.ptr = p;
-    ret->str.cchLen = sizeof("yyyy-mm-dd") - 1;;
-
-    current = (UJObject *) ret;   
   }
   switch (((Item *) current)->type) {
     case UJT_String:

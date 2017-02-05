@@ -27,6 +27,7 @@
  *
  */
 
+
 #define HELPERS true
 #include <ngx_config.h>
 #include <ngx_core.h>
@@ -39,8 +40,9 @@
 #include "json.c"
 #include "json.h"
 #include "timestamp.c"
-
 #include <locale.h>
+
+
 
 static ngx_int_t ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *in);
 
@@ -195,11 +197,26 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
   }
 
   char *json_source = (char *) out->buf->pos;
-  // Bail out if not json
-  if (out->buf->last == NULL || (out->buf->last - out->buf->pos) == 0 || 
-         json_source == NULL || (json_source[0] != '[' && json_source[0] != '{')) {
-    //fprintf(stdout, "not json\n");
+
+  // fprintf(stdout, "Mustache called one time [%d]", out->buf->last - out->buf->pos);
+  // Skip empty buffers, somehow mustache is called again after first time, 
+  // but this condition prevents double execution, because its out->buf is zero length
+  if (out->buf->last == NULL || (out->buf->last - out->buf->pos) == 0) {
     return ngx_http_next_request_body_filter(r, out);
+  }
+
+  // we allow text to be passed as content, so mustache can add header & footer
+  if (json_source == NULL || (json_source[0] != '[' && json_source[0] != '{')) {
+    json_source = NULL;
+  }
+
+  ngx_str_t format_variable = ngx_string("format");
+  ngx_uint_t format_variable_hash = ngx_hash_key(format_variable.data, format_variable.len);
+  ngx_http_variable_value_t *format_data = ngx_http_get_variable( r, &format_variable, format_variable_hash  );
+
+  // json forced through file extension, e.g. index.html
+  if (ngx_strnstr(format_data->data, "json", format_data->len)) {
+      return ngx_http_next_request_body_filter(r, out);
   }
 
   //lame content-negotiation (without regard for qvalues)
@@ -236,14 +253,23 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
   //fprintf(stdout, "par444sing json?\n, %s", out->buf->pos);
   
   // Parse JSON
+  UJObject json = NULL;
   void *state = NULL;
-  UJObject json = UJDecode(json_source, ngx_buf_size(out->buf), NULL, &state, r);
 
-  const char *error = UJGetError(state);
-  if (error != NULL) {
-    fprintf(stdout, "ERROR: %s\n", error);
-    return ngx_http_next_request_body_filter(r, out);
+  if (json_source != NULL) {
+    json = UJDecode(json_source, ngx_buf_size(out->buf), NULL, &state, r);
 
+    const char *error = UJGetError(state);
+    if (error != NULL) {
+      fprintf(stdout, "ERROR: %s\n", error);
+      return ngx_http_next_request_body_filter(r, out);
+    }
+  } else {
+    MBStringItem  *ret = ngx_pcalloc(r->pool, sizeof(MBStringItem));
+    ret->item.type = UJT_MBString;
+    ret->str.ptr = out->buf->pos;
+    ret->str.cchLen = ngx_buf_size(out->buf);
+    json = (UJObject *) ret;
   }
 
   //fprintf(stdout, "parsed json %p ~%.*s~ \n\n\n\n\n", json, (int) ngx_buf_size(out->buf), json_source);
@@ -297,19 +323,20 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
     //UJIterArray(&iter, &m);
     
  
-      //fprintf(stdout, "Rendering\n");
+      //fprintf(stdout, "Rendering %.*s\n", 
+      //      (int) r->uri.len, r->uri.data);
       ngx_mustache_render(r, b, before_template, meta, json, NULL, NULL);
       //fprintf(stdout, "Rendered\n");
     //}
   }
   // iterate main template if data is array
-  if (UJIsArray(json)) {
-    UJObject value;
-    for (void *iter = UJBeginArray(json); UJIterArray(&iter, &value);)
-      ngx_mustache_render(r, b, template, meta, value, NULL, NULL);
-  } else if (UJIsObject(json)) {      
-      ngx_mustache_render(r, b, template, meta, json, NULL, NULL);
-  }
+ if (json_source != NULL && UJIsArray(json)) {
+   UJObject value;
+   for (void *iter = UJBeginArray(json); UJIterArray(&iter, &value);)
+     ngx_mustache_render(r, b, template, meta, value, NULL, NULL);
+ } else /*if (UJIsObject(json))*/ {      
+     ngx_mustache_render(r, b, template, meta, json, NULL, NULL);
+ }
 
 
   // render after template
@@ -319,11 +346,10 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
     ngx_mustache_render(r, b, after_template, meta, meta, NULL, NULL);
   }
 
-
   if (state)
-  UJFree(state);
+    UJFree(state);
   if (metastate)
-  UJFree(metastate);
+    UJFree(metastate);
 
   //b->start = b->pos;
   //b->end = b->last;
