@@ -122,7 +122,6 @@ ngx_module_t ngx_http_mustache_module = {
 
 
 
-
 // merge parent-child configuration of mustache
 static char *
 ngx_http_mustache_merge_conf(ngx_conf_t *cf, void *parent, void *child)

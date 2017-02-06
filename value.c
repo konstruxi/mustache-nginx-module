@@ -339,10 +339,10 @@ UJObject* resolve_value(wchar_t *string, UJObject *scope, UJObject *parent, UJOb
         if (start == -1 && multibyte[i] == '>' && i < multibytes - 1) {
           start = i + 1;
         } else if (start > -1 && multibyte[i] == '<') {
-          finish = i - 1;
+          finish = i;
         }
       }
-      if (start == multibytes || finish == -1 || start == -1) 
+      if (start == multibytes || finish == start || finish == -1 || start == -1) 
         return NULL;
 
       int newlen = finish - start;
