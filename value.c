@@ -206,11 +206,15 @@ UJObject* resolve_value(wchar_t *string, UJObject *scope, UJObject *parent, UJOb
         if (!UJIsString(current) 
         || wcsncmp(((StringItem *) last)->str.ptr, 
                    ((StringItem *) current)->str.ptr, 
-                   ((StringItem *) current)->str.cchLen) != 0)
+                   ((StringItem *) current)->str.cchLen) != 0
+        || ((StringItem *) current)->str.cchLen != ((StringItem *) last)->str.cchLen)
           return NULL;
+
       } else if (UJIsInteger(last)) {
         if (!UJIsInteger(current) || UJNumericInt(last) != UJNumericInt(current))
           return NULL;
+      } else {
+        return NULL;
       }
     // perform in
     } else if (op == 2) {

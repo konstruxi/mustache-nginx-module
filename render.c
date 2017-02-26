@@ -114,7 +114,7 @@ uintmax_t  ngx_mustache_section(ngx_http_request_t *r, ngx_buf_t *b, mustache_to
       }
     // positive condition
     } else if (token->section) {
-      if (!UJIsInteger(val) || UJNumericInt(val) > 0)
+      if (!UJIsInteger(val) || UJNumericInt(val) != 0)
         ngx_mustache_render(r, b, token->section, meta, scope, parent, grandparent);
     }
     return 1; 

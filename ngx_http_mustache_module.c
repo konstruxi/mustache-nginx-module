@@ -116,6 +116,7 @@ ngx_module_t ngx_http_mustache_module = {
     NGX_MODULE_V1_PADDING
 };
 
+
 #include "value.c"
 #include "render.c"
 #include "template.c"
@@ -137,6 +138,7 @@ ngx_http_mustache_merge_conf(ngx_conf_t *cf, void *parent, void *child)
 
     return NGX_CONF_OK;
 }
+
 
 // create mustache conf
 static void *
@@ -275,7 +277,7 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
 
   //fprintf(stdout, "raw html is not empty\n");
 
-  b = ngx_create_temp_buf(r->pool, 4096 * 20);
+  b = ngx_create_temp_buf(r->pool, 4096 * 64);
   if (b == NULL) {
       return NGX_ERROR;
   }
@@ -299,11 +301,12 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
   ngx_uint_t meta_variable_hash = ngx_hash_key(meta_variable.data, meta_variable.len);
   ngx_http_variable_value_t *meta_data = ngx_http_get_variable( r, &meta_variable, meta_variable_hash  );
 
+
   UJObject meta = NULL;
   void *metastate = NULL;
   //UJObject unwrapped;
   if (meta_data->len > 0 && (meta_data->data[0] == '[' || meta_data->data[0] == '{')) {
-    //fprintf(stdout, "parsing meta  json %d\n", meta_data->len);
+    //fprintf(stdout, "parsing meta  json %.*s\n", meta_data->len, meta_data->data);
     meta = UJDecode((char *) meta_data->data, meta_data->len, NULL, &metastate, r);
 
     if (UJIsArray(meta))
@@ -345,10 +348,10 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
     ngx_mustache_render(r, b, after_template, meta, meta, NULL, NULL);
   }
 
-  if (state)
-    UJFree(state);
   if (metastate)
     UJFree(metastate);
+  if (state)
+    UJFree(state);
 
   //b->start = b->pos;
   //b->end = b->last;
@@ -359,6 +362,8 @@ ngx_http_mustache_body_filter(ngx_http_request_t *r, ngx_chain_t *out)
     r->headers_out.content_type.data = (u_char *) "text/html";
     r->headers_out.content_type.len = sizeof("text/html") - 1;
     r->headers_out.content_type_lowcase = NULL;
+
+    //r->headers_out.content_length_n = (b->last - b->pos);
   }
     
 
